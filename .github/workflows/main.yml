@@ -1,0 +1,99 @@
+name: V2Ray Server
+
+on:
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350  # ~5:50 ساعات (أقل من حد GitHub الـ 6 ساعات)
+
+    steps:
+      # ===== الخلية الأولى: تحميل الأدوات =====
+      - name: Download Xray
+        run: |
+          wget -qO xray.zip https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip
+          sudo unzip -qo xray.zip -d /usr/local/bin/
+          sudo chmod +x /usr/local/bin/xray
+          rm -f xray.zip
+
+      - name: Download Cloudflared
+        run: |
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -O cloudflared
+          chmod +x cloudflared
+
+      - name: Install Python dependencies
+        run: pip install -q huggingface_hub
+
+      # ===== الخلية الثانية: التشغيل + التحديث التلقائي =====
+      - name: Start V2Ray and update HuggingFace
+        env:
+          CLIENT_UUID: ${{ secrets.CLIENT_UUID }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE: ${{ secrets.HF_SPACE }}
+        run: |
+          python3 << 'SCRIPT'
+          import os, subprocess, json, time, re
+
+          CLIENT_UUID = os.environ["CLIENT_UUID"]
+          PORT = 8080
+          HF_TOKEN = os.environ["HF_TOKEN"]
+          HF_SPACE = os.environ["HF_SPACE"]
+
+          # إنشاء ملف إعدادات Xray
+          config = {
+              "log": {"loglevel": "warning"},
+              "inbounds": [{"port": PORT, "protocol": "vless",
+                  "settings": {"clients": [{"id": CLIENT_UUID}], "decryption": "none"},
+                  "streamSettings": {"network": "ws", "wsSettings": {"path": "/v2ray"}}}],
+              "outbounds": [{"protocol": "freedom"}]
+          }
+          with open("config.json", "w") as f:
+              json.dump(config, f)
+
+          # تشغيل Xray
+          print("🚀 Starting server...")
+          xray_process = subprocess.Popen(["/usr/local/bin/xray", "run", "-config", "config.json"])
+
+          # تشغيل Cloudflare Tunnel
+          print("🌍 Starting tunnel...")
+          cf_process = subprocess.Popen(
+              ["./cloudflared", "tunnel", "--url", f"http://localhost:{PORT}"],
+              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+
+          # استخراج رابط النفق
+          tunnel_url = ""
+          for _ in range(60):
+              line = cf_process.stdout.readline()
+              if not line:
+                  break
+              match = re.search(r'(https://[a-zA-Z0-9-]+\.trycloudflare\.com)', line)
+              if match:
+                  tunnel_url = match.group(1)
+                  break
+
+          if tunnel_url:
+              domain_only = tunnel_url.replace("https://", "")
+              print(f"\n👉 Tunnel: {domain_only}")
+
+              # تحديث HuggingFace تلقائياً
+              try:
+                  from huggingface_hub import HfApi
+                  api = HfApi(token=HF_TOKEN)
+                  api.add_space_secret(HF_SPACE, "TARGET_URL", domain_only)
+                  print("✅ تم تحديث HuggingFace تلقائياً!")
+              except Exception as e:
+                  print(f"⚠️ فشل التحديث: {e}\nانسخ يدوياً: {domain_only}")
+          else:
+              print("❌ Failed to get tunnel URL")
+              exit(1)
+
+          # إبقاء العملية شغالة
+          print("⏳ Keeping alive...")
+          try:
+              while True:
+                  time.sleep(60)
+          except KeyboardInterrupt:
+              xray_process.terminate()
+              cf_process.terminate()
+          SCRIPT
