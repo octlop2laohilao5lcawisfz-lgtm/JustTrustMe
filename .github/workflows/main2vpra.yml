@@ -87,8 +87,12 @@ jobs:
               print("❌ Failed", flush=True)
               exit(1)
 
-          # إغلاق قراءة output الـ cloudflared عشان ما يطبع أي حاجة تاني
-          cf_process.stdout.close()
+          # تفريغ output الـ cloudflared في الخلفية بدون طباعة (عشان العملية ما تموتش)
+          import threading
+          def _drain(pipe):
+              for _ in pipe:
+                  pass
+          threading.Thread(target=_drain, args=(cf_process.stdout,), daemon=True).start()
 
           # إبقاء العملية شغالة — بدون أي طباعة
           try:
