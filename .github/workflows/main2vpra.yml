@@ -6,7 +6,6 @@ on:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 350  # ~5:50 ساعات (أقل من حد GitHub الـ 6 ساعات)
 
     steps:
       # ===== الخلية الأولى: تحميل الأدوات =====
@@ -40,9 +39,9 @@ jobs:
           HF_TOKEN = os.environ["HF_TOKEN"]
           HF_SPACE = os.environ["HF_SPACE"]
 
-          # إنشاء ملف إعدادات Xray
+          # إنشاء ملف إعدادات Xray — loglevel = none عشان ما يطبع أي حاجة
           config = {
-              "log": {"loglevel": "warning"},
+              "log": {"loglevel": "none"},
               "inbounds": [{"port": PORT, "protocol": "vless",
                   "settings": {"clients": [{"id": CLIENT_UUID}], "decryption": "none"},
                   "streamSettings": {"network": "ws", "wsSettings": {"path": "/v2ray"}}}],
@@ -51,12 +50,13 @@ jobs:
           with open("config.json", "w") as f:
               json.dump(config, f)
 
-          # تشغيل Xray
-          print("🚀 Starting server...")
-          xray_process = subprocess.Popen(["/usr/local/bin/xray", "run", "-config", "config.json"])
+          # تشغيل Xray — كل الـ output يروح /dev/null
+          print("🚀 Starting...", flush=True)
+          xray_process = subprocess.Popen(
+              ["/usr/local/bin/xray", "run", "-config", "config.json"],
+              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-          # تشغيل Cloudflare Tunnel
-          print("🌍 Starting tunnel...")
+          # تشغيل Cloudflare Tunnel — نقرأ الـ output مؤقتاً فقط لاستخراج الرابط
           cf_process = subprocess.Popen(
               ["./cloudflared", "tunnel", "--url", f"http://localhost:{PORT}"],
               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -74,22 +74,23 @@ jobs:
 
           if tunnel_url:
               domain_only = tunnel_url.replace("https://", "")
-              print(f"\n👉 Tunnel: {domain_only}")
 
               # تحديث HuggingFace تلقائياً
               try:
                   from huggingface_hub import HfApi
                   api = HfApi(token=HF_TOKEN)
                   api.add_space_secret(HF_SPACE, "TARGET_URL", domain_only)
-                  print("✅ تم تحديث HuggingFace تلقائياً!")
+                  print("✅ Done", flush=True)
               except Exception as e:
-                  print(f"⚠️ فشل التحديث: {e}\nانسخ يدوياً: {domain_only}")
+                  print(f"⚠️ Update failed", flush=True)
           else:
-              print("❌ Failed to get tunnel URL")
+              print("❌ Failed", flush=True)
               exit(1)
 
-          # إبقاء العملية شغالة
-          print("⏳ Keeping alive...")
+          # إغلاق قراءة output الـ cloudflared عشان ما يطبع أي حاجة تاني
+          cf_process.stdout.close()
+
+          # إبقاء العملية شغالة — بدون أي طباعة
           try:
               while True:
                   time.sleep(60)
