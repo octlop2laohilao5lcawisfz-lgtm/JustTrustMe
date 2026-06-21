@@ -24,18 +24,6 @@ jobs:
       - name: Install Python dependencies
         run: pip install -q huggingface_hub
 
-      # ===== تثبيت وتشغيل Cloudflare WARP (1.1.1.1) =====
-      - name: Install and Connect Cloudflare WARP
-        run: |
-          curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg | sudo gpg --yes --dearmor --output /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg
-          echo "deb [signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflare-client.list
-          sudo apt-get update
-          sudo apt-get install -y cloudflare-warp
-          warp-cli --accept-tos registration new
-          warp-cli --accept-tos mode proxy
-          warp-cli --accept-tos connect
-          sleep 5
-
       # ===== الخلية الثانية: التشغيل + التحديث التلقائي =====
       - name: Start V2Ray and update HuggingFace
         env:
@@ -57,12 +45,7 @@ jobs:
               "inbounds": [{"port": PORT, "protocol": "vless",
                   "settings": {"clients": [{"id": CLIENT_UUID}], "decryption": "none"},
                   "streamSettings": {"network": "ws", "wsSettings": {"path": "/v2ray"}}}],
-              "outbounds": [
-                  {"protocol": "freedom", "tag": "direct",
-                   "settings": {}, "proxySettings": {"tag": "warp"}},
-                  {"protocol": "socks", "tag": "warp",
-                   "settings": {"servers": [{"address": "127.0.0.1", "port": 40000}]}}
-              ]
+              "outbounds": [{"protocol": "freedom"}]
           }
           with open("config.json", "w") as f:
               json.dump(config, f)
